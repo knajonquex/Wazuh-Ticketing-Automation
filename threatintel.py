@@ -9,6 +9,9 @@ Currently supports:
 
 from integrations.virustotal import lookup_hash
 from integrations.abuseipdb import lookup_ip
+from logger import get_logger
+
+logger = get_logger("threatintel")
 
 
 def enrich_alert(alert, policy):
@@ -41,7 +44,7 @@ def enrich_alert(alert, policy):
         sha256 = hashes.get("sha256")
 
         if sha256:
-            print(f"[ThreatIntel] Querying VirusTotal for SHA256: {sha256}")
+            logger.info("Querying VirusTotal for SHA256: %s", sha256)
 
             vt_result = lookup_hash(sha256)
 
@@ -60,7 +63,7 @@ def enrich_alert(alert, policy):
         )
 
         if ip:
-            print(f"[ThreatIntel] Querying AbuseIPDB for IP: {ip}")
+            logger.info("Querying AbuseIPDB for IP: %s", ip)
 
             abuse_result = lookup_ip(ip)
 

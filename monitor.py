@@ -14,14 +14,19 @@ from report import generate_report
 from html_report import generate_html_report
 from mailer import send_email
 from config import WATCH_FILE, SEND_EMAIL
+from logger import get_logger
+
+logger = get_logger("monitor")
+
+logger.info("All modules imported.")
 
 reader = AlertReader(WATCH_FILE)
+
 
 class AlertHandler(FileSystemEventHandler):
 
     def on_modified(self, event):
 
-        # We now watch the *directory*, so filter to our target file explicitly.
         if event.is_directory:
             return
 
@@ -29,71 +34,75 @@ class AlertHandler(FileSystemEventHandler):
             return
 
         new_alerts = reader.read_new_alerts()
-        print("[OK] New alert generated")
+        logger.debug("Read %d new raw alert(s): %r", len(new_alerts), new_alerts)
+
         for raw_alert in new_alerts:
 
-            # Parse
             alert = parse_alert(raw_alert)
-            print("[OK] Alert parsed")
 
             if alert is None:
-                print("[Filters] Skipped: unparseable alert")
+                logger.warning("Alert skipped: unparseable raw alert: %r", raw_alert)
                 continue
+
+            logger.info("Alert parsed (rule_id=%s)", alert.get("rule_id"))
 
             alert = apply_filters(alert)
 
             if alert is None:
-                print("[Filters] Skipped: did not meet severity/MITRE threshold")
+                logger.info("Alert skipped: did not meet severity/MITRE threshold")
                 continue
 
             policy = evaluate_policy(alert)
-            print("[OK] Policy evaluated")
+            logger.info("Policy evaluated")
 
             try:
                 alert = enrich_alert(alert, policy)
-                print("[OK] Threat intelligence completed")
-            except Exception as e:
-                print(f"[ThreatIntel Error] {e}")
+                logger.info("Threat intelligence enrichment completed")
+            except Exception:
+                logger.exception("Threat intelligence enrichment failed")
 
             analysis = analyze_incident(alert)
-            print("[OK] AI analysis completed")
+            logger.info("AI analysis completed")
 
             report = generate_report(alert, analysis)
-            print("[OK] Report generated")
+            incident_id = report.get("metadata", {}).get("incident_id")
+            logger.info("Report generated (incident_id=%s)", incident_id)
 
             html_file = generate_html_report(report)
-            print(f"HTML Report saved to: {html_file}")
+            logger.info("HTML report saved to disk: %s", html_file)
 
             if SEND_EMAIL:
-                print("[*] Sending email notification...")
+                logger.info("Sending email notification (incident_id=%s)", incident_id)
 
-                if send_email(report, html_file):
-                    print("[OK] Email sent successfully.")
+                if send_email(report, raw_alert):
+                    logger.info("Email sent successfully (incident_id=%s)", incident_id)
                 else:
-                    print("[FAIL] Failed to send email.")
+                    logger.error("Failed to send email (incident_id=%s)", incident_id)
             else:
-                print("[*] Email notification is disabled.")
+                logger.debug("Email notification is disabled; skipping send")
 
 
 observer = Observer()
 
-watch_dir = WATCH_FILE
+watch_dir = os.path.dirname(WATCH_FILE) or "."
 
 observer.schedule(
     AlertHandler(),
     path=watch_dir,
-    recursive=True
+    recursive=False
 )
 
 observer.start()
 
-print(f"Monitoring {WATCH_FILE} ...")
+logger.info("Monitoring started: %s", WATCH_FILE)
 
 try:
     while True:
         time.sleep(1)
 
 except KeyboardInterrupt:
+    logger.info("Shutdown requested (KeyboardInterrupt). Stopping observer...")
     observer.stop()
 
 observer.join()
+logger.info("Monitor stopped cleanly.")

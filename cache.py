@@ -1,6 +1,12 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+from logger import get_logger
+
+logger = get_logger("cache")
+
+CACHE_VERSION = 1
 
 class IncidentCache:
     """
@@ -11,6 +17,12 @@ class IncidentCache:
         cache/<sha256>.json
 
     where <sha256> is the incident fingerprint.
+
+    Entries are self-describing: they're wrapped with a cache_version,
+    the model that produced them, and a created_at timestamp, so a
+    stale entry (wrong version, or produced by a model you've since
+    switched away from) can be detected and ignored automatically
+    instead of silently served forever.
     """
 
     CACHE_DIR = Path("cache")
@@ -29,7 +41,15 @@ class IncidentCache:
     # Cache Exists
     # ==========================================================
 
-    def exists(self, incident_hash): #Returns True if the cache file exists.
+    def exists(self, incident_hash):
+        """
+        Returns True if the cache file exists.
+
+        Note: this only checks presence on disk, not whether the
+        entry is still valid for the current model/version -- that
+        check happens in load(). A file can exist() but still load()
+        as None if it's stale.
+        """
 
         return self._cache_file(incident_hash).exists()
 
@@ -37,12 +57,19 @@ class IncidentCache:
     # Load Cache
     # ==========================================================
 
-    def load(self, incident_hash):
+    def load(self, incident_hash, model=None):
         """
         Load cached AI analysis.
 
+        Args:
+            incident_hash (str): the fingerprint to look up.
+            model (str, optional): the model currently configured
+                (OLLAMA_MODEL). If given, entries cached under a
+                different model are treated as a miss.
+
         Returns:
-            dict | None
+            dict | None -- the analysis object itself (unwrapped),
+            or None if there's no usable cached entry.
         """
 
         cache_file = self._cache_file(incident_hash)
@@ -52,17 +79,35 @@ class IncidentCache:
 
         try:
 
-            with cache_file.open(
-                "r",
-                encoding="utf-8"
-            ) as f:
+            with cache_file.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
 
-                return json.load(f)
+            # Backward compatibility: cache entries written before this
+            # wrapper existed are just the bare analysis dict. Serve
+            # them as-is rather than treating them as invalid.
+            if not isinstance(payload, dict) or "analysis" not in payload:
+                return payload
+
+            if payload.get("cache_version") != CACHE_VERSION:
+                logger.info(
+                    "%s... cached under a different cache_version, treating as a miss.",
+                    incident_hash[:12]
+                )
+                return None
+
+            if model is not None and payload.get("model") != model:
+                logger.info(
+                    "%s... was cached with model \"%s\", current model is \"%s\" -- treating as a miss.",
+                    incident_hash[:12], payload.get("model"), model
+                )
+                return None
+
+            return payload.get("analysis")
 
         except Exception:
 
             # Corrupted cache
-
+            logger.warning("Corrupted cache file for %s, deleting it.", incident_hash[:12])
             cache_file.unlink(missing_ok=True)
 
             return None
@@ -71,14 +116,24 @@ class IncidentCache:
     # Save Cache
     # ==========================================================
 
-    def save(self, incident_hash, analysis):
+    def save(self, incident_hash, analysis, model=None):
         """
-        Save AI analysis to disk using an atomic write.
+        Save AI analysis to disk using an atomic write, wrapped with
+        cache_version/model/created_at metadata.
         """
 
         cache_file = self._cache_file(incident_hash)
 
         tmp_file = cache_file.with_suffix(".tmp")
+
+        payload = {
+            "cache_version": CACHE_VERSION,
+            "model": model,
+            "created_at": datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            "analysis": analysis,
+        }
 
         with tmp_file.open(
             "w",
@@ -86,20 +141,24 @@ class IncidentCache:
         ) as f:
 
             json.dump(
-                analysis,
+                payload,
                 f,
                 indent=4,
                 ensure_ascii=False
             )
 
-    # Atomically replace the old cache file
+        # Atomically replace the old cache file
         tmp_file.replace(cache_file)
 
     # ==========================================================
     # Delete Cache
     # ==========================================================
 
-    def delete(self, incident_hash): #Delete a cache entry.
+    def delete(self, incident_hash):
+        """
+        Delete a cache entry.
+        """
+
         cache_file = self._cache_file(incident_hash)
 
         if cache_file.exists():

@@ -11,9 +11,11 @@ from config import (
     OLLAMA_URL,
     OLLAMA_TIMEOUT
 )
+from logger import get_logger
 
 MODEL = OLLAMA_MODEL
 CACHE = IncidentCache()
+logger = get_logger("ollama_ai")
 
 # ==========================================================
 # Expected AI Response Schema
@@ -315,9 +317,7 @@ def analyze_incident(alert):
 
     incident_hash = IncidentFingerprint.generate(alert)
 
-    print("\n===================================================")
-    print(f"Incident Fingerprint : {incident_hash}")
-    print("===================================================\n")
+    logger.info("Incident fingerprint: %s", incident_hash)
 
     # --------------------------------------------------
     # Cache Lookup
@@ -325,23 +325,21 @@ def analyze_incident(alert):
 
     if CACHE.exists(incident_hash):
 
-        print("Cache HIT")
-        print("Loading cached AI analysis...\n")
-
-        cached = CACHE.load(incident_hash)
+        cached = CACHE.load(incident_hash, model=MODEL)
 
         if cached is not None:
+
+            logger.info("Cache HIT (%s) - returning cached analysis, skipping Ollama", incident_hash[:12])
 
             return normalize_analysis(
                 merge_with_defaults(cached)
             )
 
-        print("Cache corrupted. Regenerating...\n")
+        logger.warning("Cache entry for %s invalid, corrupted, or stale. Regenerating...", incident_hash[:12])
 
     else:
 
-        print("Cache MISS")
-        print("Sending incident to Ollama...\n")
+        logger.info("Cache MISS (%s) - querying Ollama", incident_hash[:12])
 
     # --------------------------------------------------
     # Ask Ollama
@@ -359,18 +357,17 @@ def analyze_incident(alert):
 
         CACHE.save(
             incident_hash,
-            analysis
+            analysis,
+            model=MODEL
         )
 
-        print("Analysis cached successfully.\n")
+        logger.info("Analysis generated and cached (%s)", incident_hash[:12])
 
         return analysis
 
     except Exception as e:
 
-        print("\n================ OLLAMA ERROR ================\n")
-
-        print(e)
+        logger.exception("Ollama request failed for incident %s", incident_hash[:12])
 
         fallback = copy.deepcopy(DEFAULT_ANALYSIS)
 

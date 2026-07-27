@@ -14,12 +14,26 @@ from config import (
 )
 
 from email_report import generate_email_html
+from raw_alert import save_raw_alert
+from logger import get_logger
+
+logger = get_logger("mailer")
 
 
-def send_email(report, html_file):
+def send_email(report, raw_alert):
     """
     Send an HTML incident report via email.
 
+    Args:
+        report (dict): Structured incident report.
+        raw_alert (str): The original, unmodified raw Wazuh alert JSON
+                          line (as read from alerts.json, before parsing).
+                          Saved to disk and attached as a .json file so
+                          the recipient has the original evidence, rather
+                          than attaching the styled HTML report.
+
+    Returns:
+        bool
     """
 
     alert_data = report.get("alert", {})
@@ -41,11 +55,10 @@ def send_email(report, html_file):
         message["From"] = FROM_EMAIL
         message["To"] = TO_EMAIL
         message["Subject"] = subject
-
         message["Message-ID"] = make_msgid()
 
         # ---------------------------------------------------
-        # Email Body
+        # Email Body (inline-styled, table-based -- see email_report.py)
         # ---------------------------------------------------
 
         html_body = generate_email_html(report)
@@ -53,29 +66,31 @@ def send_email(report, html_file):
         message.attach(MIMEText(html_body, "html", "utf-8"))
 
         # ---------------------------------------------------
-        # Attach the fully-styled standalone report too, so the
-        # recipient can still open/save the richer browser version.
+        # Attach the raw alert instead of the styled HTML report.
+        # Saved to disk first (so it's kept as a permanent record
+        # alongside the rest of the reports), then attached.
         # ---------------------------------------------------
 
         try:
-            with open(html_file, "rb") as f:
-                attachment = MIMEApplication(f.read(), _subtype="html")
+            raw_alert_path = save_raw_alert(raw_alert, incident_id or "unknown")
+
+            with open(raw_alert_path, "rb") as f:
+                attachment = MIMEApplication(f.read(), _subtype="json")
                 attachment.add_header(
                     "Content-Disposition",
                     "attachment",
-                    filename=f"incident-{incident_id or 'report'}.html",
+                    filename=f"raw-alert-{incident_id or 'unknown'}.json",
                 )
                 message.attach(attachment)
+
         except OSError as e:
-            print(f"[Mailer] Could not attach full HTML report: {e}")
+            logger.warning("Could not save/attach raw alert (incident_id=%s): %s", incident_id, e)
 
         # ---------------------------------------------------
         # Send Email
         # ---------------------------------------------------
 
-        print("\n==============================")
-        print("Sending Email...")
-        print("==============================\n")
+        logger.info("Sending email (incident_id=%s, subject=%r)", incident_id, subject)
 
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
 
@@ -92,13 +107,12 @@ def send_email(report, html_file):
                 message.as_string()
             )
 
-        print("Email sent successfully.")
+        logger.info("Email sent successfully (incident_id=%s)", incident_id)
 
         return True
 
-    except Exception as e:
+    except Exception:
 
-        print("\n========== EMAIL ERROR ==========\n")
-        print(e)
+        logger.exception("Failed to send email (incident_id=%s)", incident_id)
 
         return False

@@ -1,12 +1,13 @@
 import html
 from pathlib import Path
 from datetime import datetime, timezone
+from logger import get_logger
 
+logger = get_logger("html_report")
 
 OUTPUT_DIR = Path("reports")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# (minimum rule level, label, color) â€” checked in order, first match wins
 SEVERITY_LEVELS = [
     (15, "CRITICAL", "#9f1c2e"),
     (10, "HIGH", "#b6540b"),
@@ -497,6 +498,8 @@ def generate_html_report(report):
     filename = OUTPUT_DIR / f"{metadata.get('incident_id', 'report')}.html"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(html_doc)
+
+    logger.info("Report written to: %s", filename.resolve())
 
     return filename
 

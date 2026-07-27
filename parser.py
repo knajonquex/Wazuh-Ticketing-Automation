@@ -1,5 +1,9 @@
 import json
 
+from logger import get_logger
+
+logger = get_logger("parser")
+
 
 def parse_hashes(hash_string):
     """
@@ -211,8 +215,9 @@ def parse_alert(raw_json):
         }
 
     except json.JSONDecodeError:
+        logger.warning("Alert skipped: invalid JSON")
         return None
 
-    except Exception as e:
-        print(f"[Parser Error] {e}")
+    except Exception:
+        logger.exception("Unexpected error while parsing alert")
         return None
