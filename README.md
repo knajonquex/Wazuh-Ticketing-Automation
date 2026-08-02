@@ -87,7 +87,7 @@ Wazuh-AI-SOC-Automation/
 ├── email_report.py            # Email-safe HTML template
 ├── mailer.py                  # SMTP email sender
 │
-├── config.env                 # Configuration template/Project configuration
+├── config.py                  # Project configuration
 │
 ├── reports/                   # Generated reports
 ├── cache/                     # Cached AI analysis
@@ -150,7 +150,7 @@ Configure the project
 Edit:
 
 ```
-config.env
+config.py
 ```
 
 Configure:
@@ -300,7 +300,7 @@ Optimized HTML format compatible with common email clients using inline CSS.
 Most project behavior is controlled through:
 
 ```
-config.env
+config.py
 ```
 
 Including:
